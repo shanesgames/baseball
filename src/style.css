@@ -178,8 +178,8 @@ canvas {
 
 #strike-zone-overlay {
   position: relative;
-  width: min(18vw, 220px);
-  height: min(28vw, 320px);
+  width: min(20vw, 260px);
+  height: min(32vw, 360px);
   pointer-events: auto; /* capture mouse */
   border-radius: 4px;
   box-sizing: border-box;

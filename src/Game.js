@@ -30,9 +30,10 @@ export class Game {
     );
 
     this.cameraConfig = {
-      distance: 5.5, // meters behind plate
-      height: 1.4,
-      fov: 55
+      distance: 4.8,   // meters behind plate
+      height: 1.35,    // eye height
+      fov: 60,
+      xOffset: -0.85   // over the batter's back shoulder (right-handed)
     };
 
     // Plate / mound layout (z ~ 0 for plate plane)
@@ -123,9 +124,13 @@ export class Game {
   }
 
   _applyCameraConfig() {
-    const { distance, height, fov } = this.cameraConfig;
+    const { distance, height, fov, xOffset } = this.cameraConfig;
     this.camera.fov = fov;
-    this.camera.position.set(0, height, this.plateZ + distance);
+    this.camera.position.set(
+      xOffset || 0,
+      height,
+      this.plateZ + distance
+    );
     this.camera.lookAt(0, this.strikeZoneCenterY, this.plateZ);
     this.camera.updateProjectionMatrix();
   }
