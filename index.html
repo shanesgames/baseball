@@ -2,12 +2,53 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <title>Three.js Batting Cage</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>baseballgame</title>
   </head>
   <body>
     <div id="app"></div>
+
+    <div id="hud">
+      <div class="hud-panel">
+        <div class="hud-row">
+          <span class="label">Pitch</span>
+          <span id="pitch-type">–</span>
+        </div>
+        <div class="hud-row">
+          <span class="label">Velocity</span>
+          <span><span id="pitch-mph">0</span> mph</span>
+        </div>
+        <div class="hud-row">
+          <span class="label">Result</span>
+          <span id="result-text">Ready</span>
+        </div>
+        <div class="hud-row">
+          <span class="label">Strikes</span>
+          <span id="strikes-value">0</span>
+        </div>
+        <div class="hud-row">
+          <span class="label">Outs</span>
+          <span id="outs-value">0</span>
+        </div>
+        <div class="hud-row">
+          <span class="label">Distance</span>
+          <span><span id="distance-value">0</span> ft</span>
+        </div>
+        <div class="hud-row">
+          <span class="label">Score</span>
+          <span id="score-value">0</span>
+        </div>
+        <div class="hud-row controls">
+          <span>Space: swing · D: debug</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Debug overlay -->
+    <div id="debug-overlay" class="debug-hidden">
+      <pre id="debug-text"></pre>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
