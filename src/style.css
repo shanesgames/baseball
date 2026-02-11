@@ -107,6 +107,35 @@ canvas {
   color: #cbd5f5;
 }
 
+.hud-row.pitch-row {
+  margin-top: 0.45rem;
+  justify-content: flex-start;
+}
+
+#pitch-button {
+  pointer-events: auto;
+  padding: 0.3rem 0.8rem;
+  border-radius: 999px;
+  border: 1px solid rgba(250, 204, 21, 0.9);
+  background: radial-gradient(circle at top, #facc15, #f97316);
+  color: #111827;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.6);
+}
+
+#pitch-button:hover {
+  filter: brightness(1.05);
+}
+
+#pitch-button:active {
+  transform: translateY(1px);
+  box-shadow: 0 5px 12px rgba(0, 0, 0, 0.7);
+}
+
 /* Debug overlay */
 #debug-overlay {
   position: fixed;
@@ -134,4 +163,86 @@ canvas {
 
 .debug-hidden {
   display: none;
+}
+
+/* Strike-zone overlay + PCI reticle */
+#zone-overlay-wrapper {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+}
+
+#strike-zone-overlay {
+  position: relative;
+  width: min(18vw, 220px);
+  height: min(28vw, 320px);
+  pointer-events: auto; /* capture mouse */
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+#reticle {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 2px solid #facc15;
+  box-shadow: 0 0 8px rgba(250, 204, 21, 0.8);
+  transform: translate(-50%, -50%);
+  left: 50%;
+  top: 50%;
+  pointer-events: none;
+}
+
+.debug-pci {
+  outline: 1px solid rgba(148, 163, 184, 0.9);
+}
+
+/* Right-side controls */
+#controls-panel {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 9;
+  pointer-events: none;
+  max-width: 260px;
+}
+
+#controls-panel h2 {
+  margin: 0 0 0.3rem;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #9ca3af;
+}
+
+#controls-panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0.4rem 0.7rem;
+  background: rgba(15, 23, 42, 0.9);
+  border-radius: 0.5rem;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  font-size: 0.78rem;
+  pointer-events: auto;
+}
+
+#controls-panel li {
+  margin-bottom: 0.25rem;
+}
+
+#controls-panel li:last-child {
+  margin-bottom: 0;
+}
+
+#controls-panel .hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.7rem;
+  color: #cbd5f5;
+  max-width: 260px;
+  pointer-events: auto;
 }

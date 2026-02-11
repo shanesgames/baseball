@@ -8,6 +8,7 @@
   <body>
     <div id="app"></div>
 
+    <!-- Top-left HUD -->
     <div id="hud">
       <div class="hud-panel">
         <div class="hud-row">
@@ -38,13 +39,35 @@
           <span class="label">Score</span>
           <span id="score-value">0</span>
         </div>
-        <div class="hud-row controls">
-          <span>Space: swing · D: debug</span>
+        <div class="hud-row pitch-row">
+          <button id="pitch-button" type="button">PITCH</button>
         </div>
       </div>
     </div>
 
-    <!-- Debug overlay -->
+    <!-- Center strike-zone overlay + reticle (PCI-like) -->
+    <div id="zone-overlay-wrapper">
+      <div id="strike-zone-overlay">
+        <div id="reticle"></div>
+      </div>
+    </div>
+
+    <!-- Right-side controls -->
+    <div id="controls-panel">
+      <h2>Controls</h2>
+      <ul>
+        <li><strong>Enter / PITCH</strong>: throw pitch</li>
+        <li><strong>Mouse</strong>: move reticle inside zone</li>
+        <li><strong>Click / Space</strong>: swing</li>
+        <li><strong>D</strong>: toggle debug/zone outlines</li>
+      </ul>
+      <p class="hint">
+        Click <strong>PITCH</strong> to start. Aim with mouse. Swing when the
+        ball crosses the zone.
+      </p>
+    </div>
+
+    <!-- Debug overlay text -->
     <div id="debug-overlay" class="debug-hidden">
       <pre id="debug-text"></pre>
     </div>

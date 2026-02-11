@@ -19,6 +19,11 @@ const ui = new UI();
 const game = new Game(renderer, ui);
 const debugOverlay = new DebugOverlay();
 
+// Wire pitch button
+ui.setPitchHandler(() => {
+  game.requestPitch();
+});
+
 // Animation loop with delta time
 let lastTime = performance.now();
 
@@ -46,13 +51,29 @@ window.addEventListener('resize', () => {
   game.onResize(width, height);
 });
 
-// Input
+// Keyboard input
 window.addEventListener('keydown', (event) => {
   if (event.code === 'Space') {
     event.preventDefault();
     game.handleSwing();
+  } else if (event.code === 'Enter') {
+    event.preventDefault();
+    game.requestPitch();
   } else if (event.code === 'KeyD') {
     debugOverlay.toggle();
     game.setDebugVisible(debugOverlay.visible);
   }
+});
+
+// Mouse input for swinging (left click)
+window.addEventListener('mousedown', (event) => {
+  if (event.button !== 0) return;
+
+  const target = event.target;
+  if (target.closest('#hud') || target.closest('#controls-panel')) {
+    // Don't swing when clicking UI
+    return;
+  }
+
+  game.handleSwing();
 });

@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { Ball } from './Ball.js';
 import { Bat } from './Bat.js';
-import { PitcherAI } from './PitcherAI.js';
 
 const GAME_STATES = {
-  WAITING_FOR_PITCH: 'WAITING_FOR_PITCH',
+  IDLE: 'IDLE',
   PITCHING: 'PITCHING',
-  POST_MISS: 'POST_MISS',
-  POST_HIT: 'POST_HIT'
+  SWINGING: 'SWINGING',
+  BALL_IN_PLAY: 'BALL_IN_PLAY',
+  RESULT: 'RESULT'
 };
 
 const MPH_TO_MS = 0.44704;
@@ -21,20 +21,27 @@ export class Game {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0b1220);
 
+    // Camera config (batter POV)
     this.camera = new THREE.PerspectiveCamera(
       60,
       window.innerWidth / window.innerHeight,
       0.1,
       120
     );
-    this.camera.position.set(0, 1.6, 7.5);
-    this.camera.lookAt(0, 1.1, 0.5);
+
+    this.cameraConfig = {
+      distance: 5.5, // meters behind plate
+      height: 1.4,
+      fov: 55
+    };
 
     // Plate / mound layout (z ~ 0 for plate plane)
     this.plateZ = 0.25;
     this.pitcherPosition = new THREE.Vector3(0, 1.1, -18.4); // ~60.5 ft
     this.strikeZoneCenterZ = this.plateZ;
     this.strikeZoneCenterY = 1.1;
+
+    this._applyCameraConfig();
 
     // Strike zone dimensions (in meters)
     this.strikeZoneWidth = 0.6; // ~17 inches
@@ -48,6 +55,7 @@ export class Game {
     this._createLights();
     this._createField();
     this._createStrikeZoneVisual();
+    this._createCharacters();
 
     this.bat = new Bat();
     this.scene.add(this.bat.group);
@@ -55,12 +63,16 @@ export class Game {
     this.ball = new Ball();
     this.scene.add(this.ball.mesh);
 
-    this.pitcherAI = new PitcherAI();
-
     // Physics
     this.gravity = new THREE.Vector3(0, -9.8, 0);
     this.pitchDragCoeff = 0.02;
     this.flightDragCoeff = 0.03;
+
+    // Single realistic pitch config for now
+    this.pitchSpeedMph = 92;
+    this.pitchMoveXPerSec = 0.4;
+    this.pitchMoveYPerSec = -1.2;
+    this.pitchGravityScale = 0.85;
 
     // Game state
     this.score = 0;
@@ -69,29 +81,26 @@ export class Game {
     this.maxStrikes = 3;
 
     this.lastResult = 'Ready';
-    this.lastPitchType = '–';
-    this.lastPitchMph = 0;
+    this.lastPitchType = 'Fastball';
+    this.lastPitchMph = this.pitchSpeedMph;
     this.lastExitMph = 0;
     this.lastHitDistanceFeet = 0;
     this.lastWasFairHit = false;
 
-    this.state = GAME_STATES.WAITING_FOR_PITCH;
+    this.state = GAME_STATES.IDLE;
     this.stateTimer = 0;
-    this.pitchInterval = 1.0;
-    this.postMissDelay = 0.7;
-    this.postHitDelay = 1.1;
+    this.resultDelay = 1.2;
 
     // Current pitch info / plate call
-    this.currentPitch = null;
     this.currentPitchCall = '—'; // 'Ball' or 'Strike'
     this.currentPitchHasCrossedPlate = false;
+    this.swingUsedThisPitch = false;
+    this.hadContactThisPitch = false;
 
-    // Hitting/contact parameters
-    this.sweetSpotRadius = 0.09;
-    this.maxContactRadius = 0.16;
-    this.perfectTimingThreshold = 0.08;
-    this.goodTimingThreshold = 0.22;
-    this.idealContactZ = this.plateZ - 0.25;
+    // Hitting/contact parameters (screen-space + timing)
+    this.swingTimingWindowZ = 0.6; // meters around plate
+    this.maxScreenDistForHit = 0.18; // normalized in strike-zone space
+    this.maxScreenDistForPerfect = 0.07;
 
     this.ball.deactivate();
     this.ball.mesh.position.set(0, -10, 0);
@@ -99,6 +108,14 @@ export class Game {
     this.debugStrikeZoneVisible = false;
 
     this._updateUI();
+  }
+
+  _applyCameraConfig() {
+    const { distance, height, fov } = this.cameraConfig;
+    this.camera.fov = fov;
+    this.camera.position.set(0, height, this.plateZ + distance);
+    this.camera.lookAt(0, this.strikeZoneCenterY, this.plateZ);
+    this.camera.updateProjectionMatrix();
   }
 
   _createLights() {
@@ -158,30 +175,77 @@ export class Game {
     this.scene.add(this.strikeZoneWire);
   }
 
+  _createCharacters() {
+    // Simple batter silhouette (boxes + cylinder)
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color: 0x1f2937,
+      roughness: 0.8,
+      metalness: 0.1
+    });
+
+    const batter = new THREE.Group();
+
+    const legsGeo = new THREE.BoxGeometry(0.45, 0.8, 0.3);
+    const legs = new THREE.Mesh(legsGeo, bodyMat);
+    legs.position.set(0.45, 0.4, 0.55);
+    legs.castShadow = true;
+    legs.receiveShadow = true;
+    batter.add(legs);
+
+    const torsoGeo = new THREE.BoxGeometry(0.5, 0.8, 0.35);
+    const torso = new THREE.Mesh(torsoGeo, bodyMat);
+    torso.position.set(0.45, 1.2, 0.55);
+    torso.castShadow = true;
+    torso.receiveShadow = true;
+    batter.add(torso);
+
+    const headGeo = new THREE.SphereGeometry(0.18, 16, 16);
+    const head = new THREE.Mesh(headGeo, bodyMat);
+    head.position.set(0.45, 1.75, 0.55);
+    head.castShadow = true;
+    head.receiveShadow = true;
+    batter.add(head);
+
+    this.scene.add(batter);
+
+    // Simple pitcher silhouette far away
+    const pitcher = new THREE.Group();
+    const pLegs = new THREE.Mesh(legsGeo.clone(), bodyMat);
+    pLegs.scale.set(0.8, 0.9, 0.8);
+    pLegs.position.set(0, 0.4, this.pitcherPosition.z);
+    pitcher.add(pLegs);
+
+    const pTorso = new THREE.Mesh(torsoGeo.clone(), bodyMat);
+    pTorso.scale.set(0.8, 0.9, 0.8);
+    pTorso.position.set(0, 1.2, this.pitcherPosition.z);
+    pitcher.add(pTorso);
+
+    const pHead = new THREE.Mesh(headGeo.clone(), bodyMat);
+    pHead.position.set(0, 1.75, this.pitcherPosition.z);
+    pitcher.add(pHead);
+
+    this.scene.add(pitcher);
+  }
+
   update(dt) {
     this.stateTimer += dt;
 
     switch (this.state) {
-      case GAME_STATES.WAITING_FOR_PITCH:
-        if (this.stateTimer >= this.pitchInterval) {
-          this._startPitch();
-        }
+      case GAME_STATES.IDLE:
         break;
 
       case GAME_STATES.PITCHING:
+      case GAME_STATES.SWINGING:
         this._updatePitching(dt);
         break;
 
-      case GAME_STATES.POST_MISS:
-        if (this.stateTimer >= this.postMissDelay) {
-          this._resetForNextPitch();
-        }
+      case GAME_STATES.BALL_IN_PLAY:
+        this._updateBallInPlay(dt);
         break;
 
-      case GAME_STATES.POST_HIT:
-        this._updateBallInPlay(dt);
-        if (this.stateTimer >= this.postHitDelay) {
-          this._resetForNextPitch();
+      case GAME_STATES.RESULT:
+        if (this.stateTimer >= this.resultDelay) {
+          this._toIdle();
         }
         break;
     }
@@ -189,19 +253,22 @@ export class Game {
     this.bat.update(dt);
   }
 
+  requestPitch() {
+    if (this.state !== GAME_STATES.IDLE) return;
+    this._startPitch();
+  }
+
   _startPitch() {
     this.state = GAME_STATES.PITCHING;
     this.stateTimer = 0;
 
-    this.currentPitch = this.pitcherAI.chooseNextPitch();
-    const speedMs = this.currentPitch.speedMph * MPH_TO_MS;
-    this.lastPitchType = this.currentPitch.name;
-    this.lastPitchMph = this.currentPitch.speedMph;
+    const speedMs = this.pitchSpeedMph * MPH_TO_MS;
+    this.lastPitchType = 'Fastball';
+    this.lastPitchMph = this.pitchSpeedMph;
 
-    // Aim around strike zone with small offsets
     const yTarget =
-      this.strikeZoneCenterY + THREE.MathUtils.randFloatSpread(0.12);
-    const xTarget = THREE.MathUtils.randFloatSpread(0.15);
+      this.strikeZoneCenterY + THREE.MathUtils.randFloatSpread(0.1);
+    const xTarget = THREE.MathUtils.randFloatSpread(0.12);
     const target = new THREE.Vector3(xTarget, yTarget, this.strikeZoneCenterZ);
 
     const direction = target.clone().sub(this.pitcherPosition).normalize();
@@ -209,49 +276,36 @@ export class Game {
 
     this.currentPitchCall = '—';
     this.currentPitchHasCrossedPlate = false;
+    this.swingUsedThisPitch = false;
+    this.hadContactThisPitch = false;
+    this.lastResult = 'Pitching';
 
     this._updateUI();
   }
 
   _updatePitching(dt) {
-    if (!this.currentPitch) return;
-
     const prevPos = this.ball.mesh.position.clone();
 
     const pitchGravity = this.gravity
       .clone()
-      .multiplyScalar(this.currentPitch.gravityScale);
+      .multiplyScalar(this.pitchGravityScale);
 
     this.ball.update(dt, pitchGravity, this.pitchDragCoeff);
 
-    // Apply movement (break) as velocity changes
-    this.ball.velocity.x += this.currentPitch.movementXPerSec * dt;
-    this.ball.velocity.y += this.currentPitch.movementYPerSec * dt;
+    // Apply slight break as velocity changes
+    this.ball.velocity.x += this.pitchMoveXPerSec * dt;
+    this.ball.velocity.y += this.pitchMoveYPerSec * dt;
 
     // Plate crossing detection (for balls/strikes)
     this._checkPlateCrossing(prevPos, this.ball.mesh.position);
 
-    // Check for hit contact while pitch is in flight
-    if (this.bat.isInContactWindow() && !this.ball.isHit && this.ball.isActive) {
-      this._checkForHit();
-    }
-
     const pos = this.ball.mesh.position;
 
-    // Pitch is over once it travels well past plate or buries
-    if (pos.z > this.strikeZoneCenterZ + 1.0 && this.ball.isActive && !this.ball.isHit) {
-      if (this.currentPitchCall === 'Strike') {
-        this._registerMiss('Strike (looking)');
-      } else if (this.currentPitchCall === 'Ball') {
-        this._registerBall();
-      } else {
-        this._registerMiss('Miss');
-      }
-    }
+    const finishedDistance =
+      pos.z > this.strikeZoneCenterZ + 1.0 || pos.y < 0 || !this.ball.isActive;
 
-    if (pos.y < 0 && this.ball.isActive && !this.ball.isHit) {
-      // Spiked / in dirt: usually a ball
-      this._registerBall('In the dirt');
+    if (finishedDistance && !this.hadContactThisPitch) {
+      this._finishPitchWithoutContact(pos.y < 0 ? 'In the dirt' : undefined);
     }
   }
 
@@ -259,7 +313,7 @@ export class Game {
     if (
       this.currentPitchHasCrossedPlate ||
       !this.ball.isActive ||
-      this.ball.isHit
+      this.hadContactThisPitch
     ) {
       return;
     }
@@ -283,8 +337,31 @@ export class Game {
     this.currentPitchCall = inX && inY ? 'Strike' : 'Ball';
   }
 
+  _finishPitchWithoutContact(optionalLabel) {
+    // Determine outcome based on pitch call and whether hitter swung
+    if (this.currentPitchCall === 'Ball') {
+      this.lastResult = optionalLabel || 'Ball';
+      // Balls/true count system will be expanded later
+    } else if (this.swingUsedThisPitch) {
+      this._addStrike();
+      this.lastResult = 'Strike (swinging)';
+    } else if (this.currentPitchCall === 'Strike') {
+      this._addStrike();
+      this.lastResult = 'Strike (looking)';
+    } else {
+      this.lastResult = optionalLabel || 'Miss';
+    }
+
+    this.ball.deactivate();
+    this.ball.mesh.position.set(0, -10, 0);
+    this._enterResultState();
+  }
+
   _updateBallInPlay(dt) {
-    if (!this.ball.isActive) return;
+    if (!this.ball.isActive) {
+      this._enterResultState();
+      return;
+    }
 
     this.ball.update(dt, this.gravity, this.flightDragCoeff);
 
@@ -305,80 +382,96 @@ export class Game {
       }
 
       this.ball.deactivate();
-      this._updateUI();
+      this._enterResultState();
       return;
     }
 
     const maxDistance = 150;
     if (p.lengthSq() > maxDistance * maxDistance) {
       this.ball.deactivate();
+      this._enterResultState();
     }
   }
 
-  _checkForHit() {
+  _enterResultState() {
+    this.state = GAME_STATES.RESULT;
+    this.stateTimer = 0;
+    this._updateUI();
+  }
+
+  _toIdle() {
+    this.state = GAME_STATES.IDLE;
+    this.stateTimer = 0;
+    if (!this.ball.isActive) {
+      this.ball.mesh.position.set(0, -10, 0);
+    }
+    this.currentPitchCall = '—';
+  }
+
+  _addStrike() {
+    this.strikes += 1;
+    if (this.strikes >= this.maxStrikes) {
+      this.strikes = 0;
+      this.outs += 1;
+    }
+  }
+
+  // Screen-space contact check based on reticle vs ball projection
+  _tryScreenSpaceContact() {
+    if (!this.ball.isActive) return false;
+
     const ballPos = this.ball.mesh.position.clone();
-    const contactPoint = this.bat.getContactPointWorld();
+    const zDelta = Math.abs(ballPos.z - this.plateZ);
+    const timingOk = zDelta <= this.swingTimingWindowZ;
+    if (!timingOk) return false;
 
-    const centerDist = ballPos.distanceTo(contactPoint);
-    if (centerDist > this.maxContactRadius) {
-      return;
+    const rect = this.ui.getStrikeZoneRect();
+    if (!rect || !rect.width || !rect.height) return false;
+
+    const projected = ballPos.project(this.camera);
+    const screenX = ((projected.x + 1) / 2) * window.innerWidth;
+    const screenY = ((-projected.y + 1) / 2) * window.innerHeight;
+
+    const u = (screenX - rect.left) / rect.width;
+    const v = (screenY - rect.top) / rect.height;
+
+    const reticle = this.ui.getReticleUV();
+
+    const du = u - reticle.u;
+    const dv = v - reticle.v;
+    const dist = Math.hypot(du, dv);
+
+    if (dist > this.maxScreenDistForHit) {
+      return false;
     }
 
-    const timingOffset = ballPos.z - this.idealContactZ;
-    const absTiming = Math.abs(timingOffset);
+    // Quality based on distance + timing
+    const distFactor = THREE.MathUtils.clamp(
+      1 - dist / this.maxScreenDistForHit,
+      0,
+      1
+    );
+    const perfectFactor =
+      dist <= this.maxScreenDistForPerfect ? 1 : distFactor * 0.7;
 
-    let timingLabel;
-    if (absTiming <= this.perfectTimingThreshold) {
-      timingLabel = 'Perfect';
-    } else if (absTiming <= this.goodTimingThreshold) {
-      timingLabel = 'Good';
-    } else {
-      timingLabel = 'Foul';
-    }
+    this._onContact(ballPos, perfectFactor);
+    return true;
+  }
 
-    let barrelQuality;
-    if (centerDist <= this.sweetSpotRadius) {
-      barrelQuality = 1;
-    } else {
-      const t =
-        (centerDist - this.sweetSpotRadius) /
-        (this.maxContactRadius - this.sweetSpotRadius);
-      barrelQuality = 1 - THREE.MathUtils.clamp(t, 0, 1);
-    }
+  _onContact(ballPos, contactQuality) {
+    this.hadContactThisPitch = true;
 
-    let timingQuality;
-    if (absTiming <= this.perfectTimingThreshold) {
-      timingQuality = 1;
-    } else if (absTiming >= this.goodTimingThreshold) {
-      timingQuality = 0;
-    } else {
-      const t =
-        (absTiming - this.perfectTimingThreshold) /
-        (this.goodTimingThreshold - this.perfectTimingThreshold);
-      timingQuality = 1 - THREE.MathUtils.clamp(t, 0, 1);
-    }
+    const quality = THREE.MathUtils.clamp(contactQuality, 0, 1);
 
-    const verticalOffset = ballPos.y - contactPoint.y;
-    const verticalQuality = 1 - Math.min(Math.abs(verticalOffset) / 0.4, 1);
-
-    const quality =
-      0.55 * barrelQuality + 0.35 * timingQuality + 0.1 * verticalQuality;
-
-    const isTimingFoul = timingLabel === 'Foul';
-    const isWeakContact = quality < 0.25;
-    const isFoul = isTimingFoul || isWeakContact;
-
-    const minExitMph = 60;
+    // Exit velocity and launch angle inspired by quality
+    const minExitMph = 65;
     const maxExitMph = 110;
-    const clampedQ = THREE.MathUtils.clamp(quality, 0, 1);
-    const exitMph = minExitMph + (maxExitMph - minExitMph) * clampedQ;
+    const exitMph = minExitMph + (maxExitMph - minExitMph) * quality;
     const exitMs = exitMph * MPH_TO_MS;
     this.lastExitMph = exitMph;
 
-    let launchAngleDeg = 10 + 20 * clampedQ;
-    if (verticalOffset < -0.05) launchAngleDeg += 10;
-    else if (verticalOffset > 0.05) launchAngleDeg -= 10;
-    launchAngleDeg = THREE.MathUtils.clamp(launchAngleDeg, -5, 45);
+    let launchAngleDeg = 8 + 20 * quality; // grounder -> elevated
+    launchAngleDeg = THREE.MathUtils.clamp(launchAngleDeg, 0, 35);
 
     const horizDir = new THREE.Vector3(0, 0, -1);
     const elevRad = THREE.MathUtils.degToRad(launchAngleDeg);
@@ -388,9 +481,11 @@ export class Game {
       horizDir.z
     ).normalize();
 
-    const pullAngleMax = THREE.MathUtils.degToRad(35);
+    // Pull vs oppo based on whether ball is slightly early/late relative to zone center
+    const timingOffset = ballPos.z - this.plateZ;
+    const pullAngleMax = THREE.MathUtils.degToRad(30);
     const pullFactor = THREE.MathUtils.clamp(
-      -timingOffset / this.goodTimingThreshold,
+      -timingOffset / this.swingTimingWindowZ,
       -1,
       1
     );
@@ -399,7 +494,8 @@ export class Game {
     const launchDir = baseDir.clone();
     launchDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), sideAngle);
 
-    const sprayAngle = THREE.MathUtils.degToRad(3);
+    // Small random spray
+    const sprayAngle = THREE.MathUtils.degToRad(4);
     launchDir.applyAxisAngle(
       new THREE.Vector3(0, 1, 0),
       THREE.MathUtils.randFloatSpread(sprayAngle)
@@ -408,71 +504,12 @@ export class Game {
     launchDir.normalize().multiplyScalar(exitMs);
     this.ball.launch(launchDir);
 
-    this.lastWasFairHit = !isFoul;
+    this.lastWasFairHit = true; // foul logic will be refined later
+    this.lastResult = quality > 0.85 ? 'Perfect contact' : 'In play';
 
-    if (isFoul) {
-      this._registerFoul();
-    } else {
-      this.lastResult = timingLabel === 'Perfect' ? 'Perfect' : 'Good';
-      this.state = GAME_STATES.POST_HIT;
-      this.stateTimer = 0;
-    }
-
-    this._updateUI();
-  }
-
-  _registerMiss(label) {
-    if (this.state !== GAME_STATES.PITCHING) return;
-
-    this.lastResult = label || 'Miss';
-
-    // Simple strikes / outs for now
-    this.strikes += 1;
-    if (this.strikes >= this.maxStrikes) {
-      this.strikes = 0;
-      this.outs += 1;
-    }
-
-    this.state = GAME_STATES.POST_MISS;
-    this.stateTimer = 0;
-    this.ball.deactivate();
-    this.ball.mesh.position.set(0, -10, 0);
-    this._updateUI();
-  }
-
-  _registerBall(optionalLabel) {
-    if (this.state !== GAME_STATES.PITCHING) return;
-
-    this.lastResult = optionalLabel || 'Ball';
-
-    // Full count/at-bat logic comes in Stage 3.
-    this.state = GAME_STATES.POST_MISS;
-    this.stateTimer = 0;
-    this.ball.deactivate();
-    this.ball.mesh.position.set(0, -10, 0);
-    this._updateUI();
-  }
-
-  _registerFoul() {
-    if (this.strikes < 2) {
-      this.strikes += 1;
-    }
-    this.lastResult = 'Foul';
-    this.state = GAME_STATES.POST_HIT;
+    this.state = GAME_STATES.BALL_IN_PLAY;
     this.stateTimer = 0;
     this._updateUI();
-  }
-
-  _resetForNextPitch() {
-    this.state = GAME_STATES.WAITING_FOR_PITCH;
-    this.stateTimer = 0;
-
-    if (!this.ball.isActive) {
-      this.ball.mesh.position.set(0, -10, 0);
-    }
-
-    this.currentPitch = null;
-    this.currentPitchCall = '—';
   }
 
   _updateUI() {
@@ -487,11 +524,23 @@ export class Game {
   }
 
   handleSwing() {
+    // Always animate swing, even without pitch
+    this.bat.startSwing();
+
     if (
-      this.state === GAME_STATES.WAITING_FOR_PITCH ||
-      this.state === GAME_STATES.PITCHING
+      this.state === GAME_STATES.PITCHING ||
+      this.state === GAME_STATES.SWINGING
     ) {
-      this.bat.startSwing();
+      if (this.swingUsedThisPitch) return;
+      this.swingUsedThisPitch = true;
+      this.state = GAME_STATES.SWINGING;
+
+      const hit = this._tryScreenSpaceContact();
+      if (!hit) {
+        // Outcome decided later when pitch finishes
+        this.lastResult = 'Swinging...';
+        this._updateUI();
+      }
     }
   }
 
@@ -508,6 +557,9 @@ export class Game {
     if (this.bat) {
       this.bat.setDebugVisible(visible);
     }
+    if (this.ui) {
+      this.ui.setDebugPCIVisible(visible);
+    }
   }
 
   getDebugInfo() {
@@ -516,8 +568,8 @@ export class Game {
 
     return {
       state: this.state,
-      pitchType: this.currentPitch ? this.currentPitch.name : 'None',
-      pitchMph: this.currentPitch ? this.currentPitch.speedMph : 0,
+      pitchType: this.lastPitchType,
+      pitchMph: this.lastPitchMph,
       lastCall: this.currentPitchCall,
       ballPosition: { x: pos.x, y: pos.y, z: pos.z },
       ballVelocity: { x: vel.x, y: vel.y, z: vel.z }
