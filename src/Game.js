@@ -68,11 +68,23 @@ export class Game {
     this.pitchDragCoeff = 0.02;
     this.flightDragCoeff = 0.03;
 
-    // Single realistic pitch config for now
+    // Base ranges for pitch variability (all fastballs for now)
+    this.pitchBaseConfig = {
+      speedMin: 88,
+      speedMax: 97,
+      moveXMin: -0.9,
+      moveXMax: 0.9,
+      moveYMin: -1.0,
+      moveYMax: 0.2,
+      gravityScaleMin: 0.55,
+      gravityScaleMax: 0.9
+    };
+
+    // These are set fresh every pitch
     this.pitchSpeedMph = 92;
-    this.pitchMoveXPerSec = 0.4;
-    this.pitchMoveYPerSec = -1.2;
-    this.pitchGravityScale = 0.85;
+    this.pitchMoveXPerSec = 0.0;
+    this.pitchMoveYPerSec = 0.0;
+    this.pitchGravityScale = 0.75;
 
     // Game state
     this.score = 0;
@@ -262,13 +274,77 @@ export class Game {
     this.state = GAME_STATES.PITCHING;
     this.stateTimer = 0;
 
-    const speedMs = this.pitchSpeedMph * MPH_TO_MS;
+    // Randomize pitch each time within reasonable MLB-ish ranges
+    const base = this.pitchBaseConfig;
+    const speedMph = THREE.MathUtils.randFloat(base.speedMin, base.speedMax);
+    this.pitchSpeedMph = speedMph;
     this.lastPitchType = 'Fastball';
-    this.lastPitchMph = this.pitchSpeedMph;
+    this.lastPitchMph = speedMph;
 
-    const yTarget =
-      this.strikeZoneCenterY + THREE.MathUtils.randFloatSpread(0.1);
-    const xTarget = THREE.MathUtils.randFloatSpread(0.12);
+    this.pitchMoveXPerSec = THREE.MathUtils.randFloat(
+      base.moveXMin,
+      base.moveXMax
+    );
+    this.pitchMoveYPerSec = THREE.MathUtils.randFloat(
+      base.moveYMin,
+      base.moveYMax
+    );
+    this.pitchGravityScale = THREE.MathUtils.randFloat(
+      base.gravityScaleMin,
+      base.gravityScaleMax
+    );
+
+    const speedMs = speedMph * MPH_TO_MS;
+
+    // Decide if this pitch is intended as a strike or a ball
+    const isStrikeIntent = Math.random() < 0.7; // ~70% strikes, 30% balls
+    let xTarget;
+    let yTarget;
+
+    if (isStrikeIntent) {
+      // Aim somewhere inside the zone
+      xTarget =
+        THREE.MathUtils.randFloat(
+          this.zoneLeftX * 0.6,
+          this.zoneRightX * 0.6
+        );
+      yTarget =
+        this.strikeZoneCenterY +
+        THREE.MathUtils.randFloatSpread(this.strikeZoneHeight * 0.4);
+    } else {
+      // Miss off the plate (up/down/in/out)
+      const side = Math.floor(Math.random() * 4); // 0: up,1:down,2:in,3:away
+      const off = this.strikeZoneHeight * 0.5;
+      switch (side) {
+        case 0: // high
+          xTarget = THREE.MathUtils.randFloat(
+            this.zoneLeftX * 0.8,
+            this.zoneRightX * 0.8
+          );
+          yTarget = this.zoneTopY + off;
+          break;
+        case 1: // low
+          xTarget = THREE.MathUtils.randFloat(
+            this.zoneLeftX * 0.8,
+            this.zoneRightX * 0.8
+          );
+          yTarget = this.zoneBottomY - off;
+          break;
+        case 2: // inside (to righty)
+          xTarget = this.zoneRightX + off;
+          yTarget =
+            this.strikeZoneCenterY +
+            THREE.MathUtils.randFloatSpread(this.strikeZoneHeight * 0.2);
+          break;
+        default: // away
+          xTarget = this.zoneLeftX - off;
+          yTarget =
+            this.strikeZoneCenterY +
+            THREE.MathUtils.randFloatSpread(this.strikeZoneHeight * 0.2);
+          break;
+      }
+    }
+
     const target = new THREE.Vector3(xTarget, yTarget, this.strikeZoneCenterZ);
 
     const direction = target.clone().sub(this.pitcherPosition).normalize();
