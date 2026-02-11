@@ -1,26 +1,32 @@
 import * as THREE from 'three';
 
-// Bat with more realistic shape and swing keyframes around a hand pivot.
+// MLB-style bat swing using a batPivot at the hands and keyframed poses.
 
 export class Bat {
   constructor() {
+    // Public root for world placement (e.g. moving the batter)
     this.group = new THREE.Group();
 
-    // Create a simple bat profile for LatheGeometry: handle -> barrel
+    // Pivot at the hitter's hands. All swing rotations happen here.
+    this.batPivot = new THREE.Object3D();
+    this.group.add(this.batPivot);
+
+    // Create a bat profile for LatheGeometry: handle (near pivot) -> barrel
     const profile = [];
-    // y goes along bat length, x is radius
-    profile.push(new THREE.Vector2(0.02, -0.55)); // knob end
+    // y along bat length, x is radius
+    profile.push(new THREE.Vector2(0.02, -0.55)); // knob
     profile.push(new THREE.Vector2(0.03, -0.5));  // handle
     profile.push(new THREE.Vector2(0.035, -0.2));
     profile.push(new THREE.Vector2(0.05, 0.05));
     profile.push(new THREE.Vector2(0.06, 0.25));  // start of barrel
-    profile.push(new THREE.Vector2(0.065, 0.45)); // barrel
+    profile.push(new THREE.Vector2(0.065, 0.45)); // barrel end
 
-    const geometry = new THREE.LatheGeometry(profile, 24);
+    const geometry = new THREE.LatheGeometry(profile, 28);
     geometry.rotateZ(Math.PI / 2);
 
-    // Shift geometry so the hands/pivot are near the knob end
-    geometry.translate(0.45, 0, 0);
+    // Offset geometry so the handle/knob is at the pivot (origin).
+    // Positive X points toward the barrel from the hands.
+    geometry.translate(0.55, 0, 0);
 
     const material = new THREE.MeshStandardMaterial({
       color: 0xffe0a3,
@@ -30,36 +36,56 @@ export class Bat {
 
     const batMesh = new THREE.Mesh(geometry, material);
     batMesh.castShadow = true;
-    this.group.add(batMesh);
+    this.batPivot.add(batMesh);
 
-    // Right-handed batter: place pivot near hands
-    this.group.position.set(0.4, 1.1, 0.45);
+    // Place the entire bat system near the hitter's hands in world space
+    this.group.position.set(0.35, 1.15, 0.45);
 
-    // Keyframe rotations around the pivot (Euler in radians)
-    this.restRotation = new THREE.Euler(0.2, 0.9, 0.1);      // relaxed stance
-    this.loadRotation = new THREE.Euler(0.3, 1.2, 0.25);     // small coil back
-    this.contactRotation = new THREE.Euler(-0.1, 0.0, -0.05); // through the zone
-    this.followRotation = new THREE.Euler(-0.25, -0.4, -0.25); // follow-through
+    // --- Swing animation system ---
 
-    this.group.rotation.copy(this.restRotation);
+    // Total duration and contact window (normalized t)
+    this.SWING_DURATION = 0.55; // seconds
+    this.CONTACT_START = 0.16;
+    this.CONTACT_END = 0.22;
 
-    this.isSwinging = false;
-    this.swingTime = 0;
+    // Key poses (times in normalized [0,1], rotations in radians)
+    // x=pitch (up/down), y=yaw (across zone), z=roll (wrist)
+    this.keyframes = [
+      {
+        t: 0.0,
+        rot: new THREE.Euler(0.10, -0.40, 0.10) // ready
+      },
+      {
+        t: 0.10,
+        rot: new THREE.Euler(0.20, -0.65, 0.18) // LOAD: small coil back/up
+      },
+      {
+        t: 0.16,
+        rot: new THREE.Euler(0.05, 0.10, -0.10) // LAUNCH: accelerating to zone
+      },
+      {
+        t: 0.20,
+        rot: new THREE.Euler(-0.05, 0.35, -0.25) // CONTACT: through the zone
+      },
+      {
+        t: 0.35,
+        rot: new THREE.Euler(-0.20, 1.05, -0.35) // FOLLOW-THROUGH: across body
+      },
+      {
+        t: 0.55,
+        rot: new THREE.Euler(0.10, -0.40, 0.10) // RECOVER: back to ready
+      }
+    ];
 
-    // Timing (seconds)
-    this.loadDuration = 0.08;
-    this.attackDuration = 0.16; // fast whip to contact
-    this.followDuration = 0.18;
-    this.recoverDuration = 0.18;
-    this.totalSwingDuration =
-      this.loadDuration + this.attackDuration + this.followDuration + this.recoverDuration;
+    // Internal swing state
+    this.swingActive = false;
+    this.swingTime = 0; // seconds
 
-    // Contact window during attack phase
-    this.contactWindowStartTime = this.loadDuration + this.attackDuration * 0.3;
-    this.contactWindowEndTime = this.loadDuration + this.attackDuration * 0.9;
+    // Start from ready pose
+    this.batPivot.rotation.copy(this.keyframes[0].rot);
 
-    // Local sweet spot near barrel end (for optional world checks)
-    this._contactPointLocal = new THREE.Vector3(0.85, 0, 0);
+    // Contact point for optional world-space checks (near barrel end)
+    this._contactPointLocal = new THREE.Vector3(0.95, 0, 0);
 
     // Debug contact sphere (wireframe)
     const debugGeo = new THREE.SphereGeometry(0.09, 10, 10);
@@ -70,77 +96,94 @@ export class Bat {
     this.debugContactSphere = new THREE.Mesh(debugGeo, debugMat);
     this.debugContactSphere.position.copy(this._contactPointLocal);
     this.debugContactSphere.visible = false;
-    this.group.add(this.debugContactSphere);
+    this.batPivot.add(this.debugContactSphere);
+  }
+
+  // Cubic easing helpers
+  static easeInCubic(x) {
+    return x * x * x;
+  }
+
+  static easeOutCubic(x) {
+    const t = 1 - x;
+    return 1 - t * t * t;
+  }
+
+  static easeInOutCubic(x) {
+    if (x < 0.5) return 4 * x * x * x;
+    const t = -2 * x + 2;
+    return 1 - (t * t * t) / 2;
   }
 
   startSwing() {
-    if (this.isSwinging) return;
-    this.isSwinging = true;
+    // Only allow a new swing once the previous one finished
+    if (this.swingActive && this.swingTime < this.SWING_DURATION) return;
+    this.swingActive = true;
     this.swingTime = 0;
   }
 
   update(dt) {
-    if (!this.isSwinging) return;
+    if (!this.swingActive) return;
 
     this.swingTime += dt;
-    const t = this.swingTime;
-
-    let fromRot = this.restRotation;
-    let toRot = this.restRotation;
-    let localT = 0;
-
-    if (t <= this.loadDuration) {
-      // Load phase
-      fromRot = this.restRotation;
-      toRot = this.loadRotation;
-      localT = t / this.loadDuration;
-    } else if (t <= this.loadDuration + this.attackDuration) {
-      // Fast attack to contact
-      fromRot = this.loadRotation;
-      toRot = this.contactRotation;
-      localT = (t - this.loadDuration) / this.attackDuration;
-    } else if (t <= this.loadDuration + this.attackDuration + this.followDuration) {
-      // Follow-through
-      fromRot = this.contactRotation;
-      toRot = this.followRotation;
-      localT =
-        (t - this.loadDuration - this.attackDuration) / this.followDuration;
-    } else if (t <= this.totalSwingDuration) {
-      // Recovery back to rest
-      fromRot = this.followRotation;
-      toRot = this.restRotation;
-      localT =
-        (t -
-          this.loadDuration -
-          this.attackDuration -
-          this.followDuration) /
-        this.recoverDuration;
-    } else {
-      this.isSwinging = false;
-      this.group.rotation.copy(this.restRotation);
+    if (this.swingTime >= this.SWING_DURATION) {
+      // Clamp to final keyframe and stop
+      this.swingTime = this.SWING_DURATION;
+      this.swingActive = false;
+      this.batPivot.rotation.copy(this.keyframes[this.keyframes.length - 1].rot);
       return;
     }
 
-    // Use smooth easing for transitions
-    const eased = 1 - Math.pow(1 - THREE.MathUtils.clamp(localT, 0, 1), 3);
+    const tNorm = this.swingTime / this.SWING_DURATION; // 0..1
 
-    this.group.rotation.set(
-      THREE.MathUtils.lerp(fromRot.x, toRot.x, eased),
-      THREE.MathUtils.lerp(fromRot.y, toRot.y, eased),
-      THREE.MathUtils.lerp(fromRot.z, toRot.z, eased)
-    );
+    // Find surrounding keyframes
+    const frames = this.keyframes;
+    let i1 = 1;
+    while (i1 < frames.length && tNorm > frames[i1].t) {
+      i1++;
+    }
+    const i0 = Math.max(0, i1 - 1);
+    const k0 = frames[i0];
+    const k1 = frames[Math.min(i1, frames.length - 1)];
+
+    const span = Math.max(1e-4, k1.t - k0.t);
+    let localT = (tNorm - k0.t) / span;
+
+    // Easing: use different feel per phase
+    if (tNorm < 0.1) {
+      // LOAD: ease-in (gentle start)
+      localT = Bat.easeInCubic(localT);
+    } else if (tNorm < 0.22) {
+      // LAUNCH + CONTACT: aggressive ease-out (whip)
+      localT = Bat.easeOutCubic(localT);
+    } else if (tNorm < 0.45) {
+      // FOLLOW-THROUGH: smooth in-out
+      localT = Bat.easeInOutCubic(localT);
+    } else {
+      // RECOVER: ease-out back to ready
+      localT = Bat.easeOutCubic(localT);
+    }
+
+    const r0 = k0.rot;
+    const r1 = k1.rot;
+
+    // Interpolate Euler angles component-wise
+    const x = THREE.MathUtils.lerp(r0.x, r1.x, localT);
+    const y = THREE.MathUtils.lerp(r0.y, r1.y, localT);
+    const z = THREE.MathUtils.lerp(r0.z, r1.z, localT);
+
+    this.batPivot.rotation.set(x, y, z);
   }
 
+  // Contact window based on normalized swing time
   isInContactWindow() {
-    if (!this.isSwinging) return false;
-    return (
-      this.swingTime >= this.contactWindowStartTime &&
-      this.swingTime <= this.contactWindowEndTime
-    );
+    if (!this.swingActive && this.swingTime >= this.SWING_DURATION) return false;
+    const tNorm = this.swingTime / this.SWING_DURATION;
+    return tNorm >= this.CONTACT_START && tNorm <= this.CONTACT_END;
   }
 
   getContactPointWorld(target = new THREE.Vector3()) {
-    return this.group.localToWorld(target.copy(this._contactPointLocal));
+    return this.batPivot.localToWorld(target.copy(this._contactPointLocal));
   }
 
   setDebugVisible(visible) {
